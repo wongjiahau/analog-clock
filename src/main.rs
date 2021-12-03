@@ -1,4 +1,9 @@
+use bresenham::Bresenham;
 use chrono::{DateTime, Local, Timelike};
+use image::{
+    imageops::{crop, resize},
+    GenericImage, GenericImageView, ImageBuffer, Luma, RgbImage,
+};
 use std::f32::consts::PI;
 use std::time::Duration;
 
@@ -7,6 +12,27 @@ fn main() {
         Ok(_) => (),
         Err(error) => eprintln!("{}", error),
     }
+}
+
+fn matrix_to_luma_image_buffer(matrix: &Matrix) -> ImageBuffer<Luma<u8>, Vec<u8>> {
+    ImageBuffer::from_fn(matrix.width as u32, matrix.height as u32, |x, y| {
+        if matrix.cells[y as usize][x as usize].on {
+            image::Luma([255u8])
+        } else {
+            image::Luma([0u8])
+        }
+    })
+}
+
+fn luma_image_buffer_to_matrix(img: ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Vec<Cell>> {
+    let width = img.width() as usize;
+    let mut cells = vec![vec![Cell { on: false }; width]; img.height() as usize];
+    img.pixels().enumerate().for_each(|(index, pixel)| {
+        let y = (index as f32 / width as f32).floor() as usize;
+        let x = index % width;
+        cells[y][x].on = pixel.0[0] == 255
+    });
+    cells
 }
 
 fn run_clock() -> Result<(), String> {
@@ -22,7 +48,7 @@ fn run_clock() -> Result<(), String> {
             midpoint_x,
             midpoint_y,
             circle_radius: midpoint_x.min(midpoint_y) / 1.1,
-            aspect_ratio: 4.0,
+            aspect_ratio: 1.0,
         };
         let datetime: DateTime<Local> = Local::now();
 
@@ -63,14 +89,37 @@ fn run_clock() -> Result<(), String> {
         );
 
         // Draw clock face
-        // let matrix = (0..12).into_iter().fold(matrix, |matrix, n|{
-        //     draw_hand(matrix, Line {
-        //         degree: (n as f32) / 12.0 * 360.0,
-        //         width: 2.0,
-        //         length: 1.0
-        //     })
-
+        // let matrix = (0..12).into_iter().fold(matrix, |matrix, n| {
+        //     draw_hand(
+        //         matrix,
+        //         Hand {
+        //             degree: (n as f32) / 12.0 * 360.0,
+        //             width: 2.0,
+        //             length: 1.0,
+        //         },
+        //     )
         // });
+
+        let mut img = matrix_to_luma_image_buffer(&matrix);
+        let stretch_ratio = 2.0;
+        let img = crop(
+            &mut img,
+            (matrix.midpoint_x - matrix.circle_radius * stretch_ratio) as u32,
+            0,
+            (matrix.circle_radius * stretch_ratio * 2.0) as u32,
+            matrix.height as u32,
+        );
+        let img = resize(
+            &img,
+            matrix.width as u32,
+            img.height(),
+            image::imageops::FilterType::Nearest,
+        );
+        let matrix = Matrix {
+            cells: luma_image_buffer_to_matrix(img),
+            ..matrix
+        };
+
         print_matrix(matrix);
         std::thread::sleep(Duration::from_millis(100));
 
@@ -146,13 +195,26 @@ struct Hand {
 }
 
 /// Draw a line originated from the center.
+/// We will be using [Bresenham Line Algorithm](https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm#History).
 fn draw_hand(matrix: Matrix, hand: Hand) -> Matrix {
     let degree = hand.degree;
     let midpoint_x = matrix.midpoint_x;
     let midpoint_y = matrix.midpoint_y;
-    let radian = degree * (2.0 * PI) / 360.0;
+    let radian = (PI / 2.0 - (degree).to_radians());
+
+    // adjust radian based on aspect_ratio
+    let radian = radian; //+ radian.cos() / matrix.aspect_ratio;
+
     let radius = matrix.circle_radius;
     let aspect_ratio = matrix.aspect_ratio;
+
+    // We treat radius as the hypotenuse
+    // Adjacent = Hypotenuse * cos theta
+    let endpoint_x = midpoint_x + (radius) * (radian.cos() * matrix.aspect_ratio);
+
+    // Opposite = Hypotenuse * sin theta
+    let endpoint_y = midpoint_y + (radius) * (radian.sin() * matrix.aspect_ratio);
+
     draw_using_equation(matrix, |x, y| {
         let error_margin = 0.001_f32;
 
@@ -160,18 +222,22 @@ fn draw_hand(matrix: Matrix, hand: Hand) -> Matrix {
         // by using the circle equation: (x - midpoint_x)^2 + (y - midpoint_y)^2 = radius^2
         let left = ((x as f32) - midpoint_x).powf(2.0) / aspect_ratio
             + ((y as f32) - midpoint_y).powf(2.0);
-        let right = ( radius * hand.length ).powf(2.0);
+        let right = (radius * hand.length).powf(2.0);
         if left > right {
-            false
-        } else if (degree - 90.0).abs() < error_margin {
-            // need to specially handle 90.0 and 180.0, as tan(90degree) and tan(180degree) is
-            // infinity.
-            x >= midpoint_x && (y - midpoint_y).abs() <= hand.width
-        } else if (degree - 180.0).abs() < error_margin {
-            x <= midpoint_x && (y - midpoint_y).abs() <= hand.width
+            return false;
         }
+
+        let mut line = Bresenham::new(
+            (midpoint_x as isize, midpoint_y as isize),
+            (endpoint_x as isize, endpoint_y as isize),
+        );
+        // else check if the points falls in the Bresenham line
+        if line.any(|(line_x, line_y)| line_x == x as isize && line_y == y as isize) {
+            return true;
+        }
+        return false;
         // Check if the points fall outside of the desired quadrant
-        else if ((0.0..=90.0).contains(&degree) && !(x >= midpoint_x && y >= midpoint_y))
+        if ((0.0..=90.0).contains(&degree) && !(x >= midpoint_x && y >= midpoint_y))
             || (90.0..=180.0).contains(&degree) && !(x >= midpoint_x && y <= midpoint_y)
             || (180.0..=270.0).contains(&degree) && !(x <= midpoint_x && y <= midpoint_y)
             || (270.0..=360.0).contains(&degree) && !(x <= midpoint_x && y >= midpoint_y)
@@ -179,10 +245,21 @@ fn draw_hand(matrix: Matrix, hand: Hand) -> Matrix {
             false
         } else {
             // TODO: need to factor in the aspect_ratio when calculating the gradian
-            // The formula use here is: `(x - midpoint_x) = (tan s) * (y + midpoint_y)`
-            // where `s` is in terms of radian.
-            let diff = (x - midpoint_x) - radian.tan() * (y - midpoint_y);
-            diff.abs() < hand.width
+            // The formulas use here are:
+            //  (x - midpoint_x) = (tan s) * (y - midpoint_y)
+            //  and
+            //  (tan (s + 90degree)) * (x - midpoint_x) = (y - midpoint_y)
+            //
+            // where s is in terms of radian.
+            //
+            // We have to use two formulas so that the hand will look almost equally wide at any
+            // angle.
+            let gradient1 = radian.tan() * aspect_ratio / 2.0;
+            let diff1 = (x - midpoint_x) - gradient1 * (y - midpoint_y);
+
+            let gradient2 = (radian + PI / 2.0).tan() * aspect_ratio / 2.0;
+            let diff2 = gradient2 * (x - midpoint_x) - (y - midpoint_y);
+            diff1.abs() < hand.width //|| diff2.abs() < hand.width
         }
     })
 }
