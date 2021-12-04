@@ -6,8 +6,10 @@ A terminal analog-clock.
 
 ![image](https://user-images.githubusercontent.com/23183656/144694983-36fb071e-a45b-491a-9354-5f40cdb587ce.png)
 
-
-
+# Installation
+```
+cargo install analog-clock
+```
 
 # Usage
 See `--help`.
