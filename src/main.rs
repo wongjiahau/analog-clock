@@ -2,8 +2,9 @@ use bresenham::Bresenham;
 use chrono::{DateTime, Local, Timelike};
 use image::{
     imageops::{crop, resize},
-    GenericImage, GenericImageView, ImageBuffer, Luma, RgbImage,
+    GenericImageView, ImageBuffer, Luma,
 };
+use line_drawing::BresenhamCircle;
 use std::f32::consts::PI;
 use std::time::Duration;
 
@@ -12,27 +13,6 @@ fn main() {
         Ok(_) => (),
         Err(error) => eprintln!("{}", error),
     }
-}
-
-fn matrix_to_luma_image_buffer(matrix: &Matrix) -> ImageBuffer<Luma<u8>, Vec<u8>> {
-    ImageBuffer::from_fn(matrix.width as u32, matrix.height as u32, |x, y| {
-        if matrix.cells[y as usize][x as usize].on {
-            image::Luma([255u8])
-        } else {
-            image::Luma([0u8])
-        }
-    })
-}
-
-fn luma_image_buffer_to_matrix(img: ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Vec<Cell>> {
-    let width = img.width() as usize;
-    let mut cells = vec![vec![Cell { on: false }; width]; img.height() as usize];
-    img.pixels().enumerate().for_each(|(index, pixel)| {
-        let y = (index as f32 / width as f32).floor() as usize;
-        let x = index % width;
-        cells[y][x].on = pixel.0[0] == 255
-    });
-    cells
 }
 
 fn run_clock() -> Result<(), String> {
@@ -48,7 +28,6 @@ fn run_clock() -> Result<(), String> {
             midpoint_x,
             midpoint_y,
             circle_radius: midpoint_x.min(midpoint_y) / 1.1,
-            aspect_ratio: 1.0,
         };
         let datetime: DateTime<Local> = Local::now();
 
@@ -101,7 +80,11 @@ fn run_clock() -> Result<(), String> {
         // });
 
         let mut img = matrix_to_luma_image_buffer(&matrix);
-        let stretch_ratio = 2.0;
+
+        // The height of character divides by the width of character in the terminal.
+        // Cannot be obtained programmatically, thus must be measured manually by user.
+        // Stretch ratio is necesary to make the circle look rounder, otherwise it will looks like a vertical ellipse.
+        let stretch_ratio = 1.0 / 0.5;
         let img = crop(
             &mut img,
             (matrix.midpoint_x - matrix.circle_radius * stretch_ratio) as u32,
@@ -127,6 +110,27 @@ fn run_clock() -> Result<(), String> {
     }
 }
 
+fn matrix_to_luma_image_buffer(matrix: &Matrix) -> ImageBuffer<Luma<u8>, Vec<u8>> {
+    ImageBuffer::from_fn(matrix.width as u32, matrix.height as u32, |x, y| {
+        if matrix.cells[y as usize][x as usize].on {
+            image::Luma([255u8])
+        } else {
+            image::Luma([0u8])
+        }
+    })
+}
+
+fn luma_image_buffer_to_matrix(img: ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Vec<Cell>> {
+    let width = img.width() as usize;
+    let mut cells = vec![vec![Cell { on: false }; width]; img.height() as usize];
+    img.pixels().enumerate().for_each(|(index, pixel)| {
+        let y = (index as f32 / width as f32).floor() as usize;
+        let x = index % width;
+        cells[y][x].on = pixel.0[0] == 255
+    });
+    cells
+}
+
 #[derive(Clone, Debug)]
 struct Cell {
     on: bool,
@@ -139,45 +143,27 @@ struct Matrix {
     midpoint_x: f32,
     midpoint_y: f32,
     circle_radius: f32,
-
-    /// The height of character divides by the width of character in the terminal.
-    /// Cannot be obtained programmatically, thus must be measured manually by user.
-    /// Aspect ratio is necesary to make the circle look rounder, otherwise it will looks like a vertical ellipse.
-    aspect_ratio: f32,
 }
 
-fn draw_circle(matrix: Matrix) -> Matrix {
-    let midpoint_x = matrix.midpoint_x;
-    let midpoint_y = matrix.midpoint_y;
-    let radius = matrix.circle_radius;
-    let aspect_ratio = matrix.aspect_ratio;
-
-    // Paint circle based on approx. of the circle equation, (x - midpoint_x)^2 + (y - midpoint_y)^2 = radius^2
-    draw_using_equation(matrix, |x, y| {
-        let left = ((x as f32) - midpoint_x).powf(2.0) / aspect_ratio
-            + ((y as f32) - midpoint_y).powf(2.0);
-        let right = radius.powf(2.0);
-        let diff = left - right;
-        diff.abs() < radius
-    })
+fn draw_circle(mut matrix: Matrix) -> Matrix {
+    let points = BresenhamCircle::new(
+        matrix.midpoint_x as i32,
+        matrix.midpoint_y as i32,
+        matrix.circle_radius as i32,
+    );
+    for (x, y) in points {
+        matrix.cells[y as usize][x as usize].on = true;
+    }
+    matrix
 }
 
-fn draw_using_equation<F>(mut matrix: Matrix, equation: F) -> Matrix
-where
-    F: Fn(/* x */ f32, /* y */ f32) -> bool,
-{
-    for x in 0..matrix.width {
-        for y in 0..matrix.height {
-            // We have to correct y so that y will follows the normal Cartesian plane,
-            // where up = increase & down = decrease.
-            //
-            // Otherwise it would be up = decrease & down = increase which is quite
-            // counter-intuitive.
-            let corrected_y = (matrix.height as f32) - (y as f32);
-            if equation(x as f32, corrected_y) {
-                matrix.cells[y][x].on = true
-            }
-        }
+struct Point {
+    x: isize,
+    y: isize,
+}
+fn draw_using_points(mut matrix: Matrix, points: Vec<Point>) -> Matrix {
+    for point in points {
+        matrix.cells[point.y as usize][point.x as usize].on = true
     }
     matrix
 }
@@ -200,68 +186,35 @@ fn draw_hand(matrix: Matrix, hand: Hand) -> Matrix {
     let degree = hand.degree;
     let midpoint_x = matrix.midpoint_x;
     let midpoint_y = matrix.midpoint_y;
-    let radian = (PI / 2.0 - (degree).to_radians());
-
-    // adjust radian based on aspect_ratio
-    let radian = radian; //+ radian.cos() / matrix.aspect_ratio;
+    let radian = PI / 2.0 - (degree).to_radians();
 
     let radius = matrix.circle_radius;
-    let aspect_ratio = matrix.aspect_ratio;
 
     // We treat radius as the hypotenuse
+    let hypotenuse = radius * hand.length;
+
     // Adjacent = Hypotenuse * cos theta
-    let endpoint_x = midpoint_x + (radius) * (radian.cos() * matrix.aspect_ratio);
+    let endpoint_x = midpoint_x + hypotenuse * (radian.cos());
 
     // Opposite = Hypotenuse * sin theta
-    let endpoint_y = midpoint_y + (radius) * (radian.sin() * matrix.aspect_ratio);
+    let endpoint_y = midpoint_y + hypotenuse * (radian.sin());
 
-    draw_using_equation(matrix, |x, y| {
-        let error_margin = 0.001_f32;
+    let points = Bresenham::new(
+        (midpoint_x as isize, midpoint_y as isize),
+        (endpoint_x as isize, endpoint_y as isize),
+    )
+    .map(|(x, y)| Point {
+        x,
 
-        // Check if the points fall outside of the circle
-        // by using the circle equation: (x - midpoint_x)^2 + (y - midpoint_y)^2 = radius^2
-        let left = ((x as f32) - midpoint_x).powf(2.0) / aspect_ratio
-            + ((y as f32) - midpoint_y).powf(2.0);
-        let right = (radius * hand.length).powf(2.0);
-        if left > right {
-            return false;
-        }
-
-        let mut line = Bresenham::new(
-            (midpoint_x as isize, midpoint_y as isize),
-            (endpoint_x as isize, endpoint_y as isize),
-        );
-        // else check if the points falls in the Bresenham line
-        if line.any(|(line_x, line_y)| line_x == x as isize && line_y == y as isize) {
-            return true;
-        }
-        return false;
-        // Check if the points fall outside of the desired quadrant
-        if ((0.0..=90.0).contains(&degree) && !(x >= midpoint_x && y >= midpoint_y))
-            || (90.0..=180.0).contains(&degree) && !(x >= midpoint_x && y <= midpoint_y)
-            || (180.0..=270.0).contains(&degree) && !(x <= midpoint_x && y <= midpoint_y)
-            || (270.0..=360.0).contains(&degree) && !(x <= midpoint_x && y >= midpoint_y)
-        {
-            false
-        } else {
-            // TODO: need to factor in the aspect_ratio when calculating the gradian
-            // The formulas use here are:
-            //  (x - midpoint_x) = (tan s) * (y - midpoint_y)
-            //  and
-            //  (tan (s + 90degree)) * (x - midpoint_x) = (y - midpoint_y)
-            //
-            // where s is in terms of radian.
-            //
-            // We have to use two formulas so that the hand will look almost equally wide at any
-            // angle.
-            let gradient1 = radian.tan() * aspect_ratio / 2.0;
-            let diff1 = (x - midpoint_x) - gradient1 * (y - midpoint_y);
-
-            let gradient2 = (radian + PI / 2.0).tan() * aspect_ratio / 2.0;
-            let diff2 = gradient2 * (x - midpoint_x) - (y - midpoint_y);
-            diff1.abs() < hand.width //|| diff2.abs() < hand.width
-        }
+        // We have to invert y because the result returned by Bresenham is based on Cartesian plane 
+        // where (0, 0) is at the bottom left corner.
+        // However for our matrix, (0, 0) is at the top left corner, which is like the Cartesian
+        // plane flip around the x-axis.
+        y: matrix.height as isize - y,
     })
+    .collect();
+
+    draw_using_points(matrix, points)
 }
 
 fn print_matrix(matrix: Matrix) {
@@ -271,13 +224,4 @@ fn print_matrix(matrix: Matrix) {
         }
         println!()
     }
-}
-
-struct Point {
-    x: f32,
-    y: f32,
-}
-
-fn distance(a: Point, b: Point) -> f32 {
-    ((a.x - b.x).powf(2.0) + (a.y - b.y).powf(2.0)).sqrt()
 }
