@@ -13,7 +13,7 @@ pub struct CliOptions {
     pub color: String,
 
     /// How often should the clock be redrawn in millisecond.
-    #[structopt(short, long, default_value = "100")]
+    #[structopt(short, long, default_value = "1000")]
     pub tick: usize,
 
     /// Hide second hand.

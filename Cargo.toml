@@ -4,6 +4,7 @@ license = "MIT"
 name = "analog-clock"
 version = "0.1.0"
 edition = "2018"
+repository = "https://github.com/wongjiahau/analog-clock/tree/master"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
