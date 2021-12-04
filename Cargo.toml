@@ -1,4 +1,6 @@
 [package]
+description = "A terminal analog clock."
+license = "MIT"
 name = "analog-clock"
 version = "0.1.0"
 edition = "2018"
