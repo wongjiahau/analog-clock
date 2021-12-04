@@ -132,7 +132,7 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
 
         let padding = matrix.circle_radius / 10.0;
         let img = {
-            let new_x =  (matrix.midpoint_x - matrix.circle_radius - padding) as u32;
+            let new_x = (matrix.midpoint_x - matrix.circle_radius - padding) as u32;
             let new_y = 0;
             let new_width = ((matrix.circle_radius + padding) * 2.0) as u32;
             let new_height = matrix.height as u32;
