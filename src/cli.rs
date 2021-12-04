@@ -7,8 +7,7 @@ use structopt::StructOpt;
 )]
 pub struct CliOptions {
     /// Color of the clock in hex.
-    /// Default is "Green Gecko", which is suitable for both black and white screen.
-    /// See https://eyeondesign.aiga.org/its-not-just-you-the-neon-glow-of-terminal-green-really-is-ubiquitous/
+    /// Default is "Green Gecko", suitable for both black and white screen.
     #[structopt(short, long, default_value = "#39ff14")]
     pub color: String,
 
