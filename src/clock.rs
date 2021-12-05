@@ -5,7 +5,7 @@ use colors_transform::Color;
 use colors_transform::Rgb;
 use image::{
     imageops::{crop, resize},
-    GenericImageView, ImageBuffer, Luma,
+    GenericImageView, ImageBuffer, Rgb as RgbPixel,
 };
 use line_drawing::BresenhamCircle;
 use std::f32::consts::PI;
@@ -24,13 +24,13 @@ pub struct RunClockOptions {
 }
 
 pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
-    let (width, height) =
-        term_size::dimensions().ok_or_else(|| "Unable to get term size :(".to_string())?;
     loop {
+        let (width, height) =
+            term_size::dimensions().ok_or_else(|| "Unable to get term size :(".to_string())?;
         let midpoint_x = (width as f32) / 2.0;
         let midpoint_y = (height as f32) / 2.0;
         let matrix = Matrix {
-            cells: vec![vec![Cell { on: false }; width]; height],
+            cells: vec![vec![None; width]; height],
             width,
             height,
             midpoint_x,
@@ -39,7 +39,7 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
         };
         let datetime: DateTime<Local> = Local::now();
 
-        let matrix = matrix.draw_circle();
+        let matrix = matrix.draw_circle(options.color);
 
         let millisecond = datetime.timestamp_millis() % 1000;
         let second = datetime.second() as f32;
@@ -58,9 +58,10 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
         let matrix = if options.show_second_hand {
             matrix.draw_hand(Hand {
                 degree: degree_second,
-                width: 2.0,
-                length: 0.9,
+                thickness: HandThickness::Thin,
+                length: 0.8,
                 line_start: HandLineStart::FromCenter,
+                color: Rgb::from_hex_str("#2E3440").unwrap(),
             })
         } else {
             matrix
@@ -68,15 +69,17 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
 
         let matrix = matrix.draw_hand(Hand {
             degree: degree_minute,
-            width: 3.0,
-            length: 0.9,
+            thickness: HandThickness::Bold,
+            length: 0.8,
             line_start: HandLineStart::FromCenter,
+            color: Rgb::from_hex_str("#3B4252").unwrap(),
         });
         let matrix = matrix.draw_hand(Hand {
             degree: degree_hour,
-            width: 4.0,
+            thickness: HandThickness::Bold,
             length: 0.5,
             line_start: HandLineStart::FromCenter,
+            color: Rgb::from_hex_str("#2E3440").unwrap(),
         });
 
         // Draw clock face: hour labels
@@ -84,9 +87,10 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
             (0..12).into_iter().fold(matrix, |matrix, n| {
                 matrix.draw_hand(Hand {
                     degree: (n as f32) / 12.0 * 360.0,
-                    width: 2.0,
+                    thickness: HandThickness::Thin,
                     length: 0.15,
                     line_start: HandLineStart::FromCircumference,
+                    color: Rgb::from_hex_str("#4C566A").unwrap(),
                 })
             })
         } else {
@@ -99,9 +103,10 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
             (0..60).into_iter().fold(matrix, |matrix, n| {
                 matrix.draw_hand(Hand {
                     degree: (n as f32) / 60.0 * 360.0,
-                    width: 2.0,
+                    thickness: HandThickness::Thin,
                     length: 0.05,
                     line_start: HandLineStart::FromCircumference,
+                    color: Rgb::from_hex_str("#4C566A").unwrap(),
                 })
             })
         } else {
@@ -134,41 +139,52 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
             ..matrix
         };
 
-        matrix.print_matrix(options.color);
+        matrix.print_matrix();
         std::thread::sleep(options.tick_interval);
 
         print!("{esc}[2J{esc}[1;1H", esc = 27 as char);
     }
 }
 
-fn matrix_to_luma_image_buffer(matrix: &Matrix) -> ImageBuffer<Luma<u8>, Vec<u8>> {
-    ImageBuffer::from_fn(matrix.width as u32, matrix.height as u32, |x, y| {
-        if matrix.cells[y as usize][x as usize].on {
-            image::Luma([255u8])
-        } else {
-            image::Luma([0u8])
-        }
-    })
+fn matrix_to_luma_image_buffer(matrix: &Matrix) -> ImageBuffer<RgbPixel<u8>, Vec<u8>> {
+    ImageBuffer::from_fn(
+        matrix.width as u32,
+        matrix.height as u32,
+        |x, y| match &matrix.cells[y as usize][x as usize] {
+            Some(cell) => RgbPixel([
+                cell.color.get_red() as u8,
+                cell.color.get_green() as u8,
+                cell.color.get_blue() as u8,
+            ]),
+            None => RgbPixel([255, 255, 255]),
+        },
+    )
 }
 
-fn luma_image_buffer_to_matrix(img: ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Vec<Cell>> {
+fn luma_image_buffer_to_matrix(img: ImageBuffer<RgbPixel<u8>, Vec<u8>>) -> Vec<Vec<Option<Cell>>> {
     let width = img.width() as usize;
-    let mut cells = vec![vec![Cell { on: false }; width]; img.height() as usize];
+    let mut cells = vec![vec![None; width]; img.height() as usize];
     img.pixels().enumerate().for_each(|(index, pixel)| {
         let y = (index as f32 / width as f32).floor() as usize;
         let x = index % width;
-        cells[y][x].on = pixel.0[0] == 255
+        cells[y][x] = if pixel != &RgbPixel([255, 255, 255]) {
+            Some(Cell {
+                color: Rgb::from(pixel.0[0] as f32, pixel.0[1] as f32, pixel.0[2] as f32),
+            })
+        } else {
+            None
+        }
     });
     cells
 }
 
 #[derive(Clone, Debug)]
 struct Cell {
-    on: bool,
+    color: Rgb,
 }
 
 struct Matrix {
-    cells: Vec<Vec<Cell>>,
+    cells: Vec<Vec<Option<Cell>>>,
     height: usize,
     width: usize,
     midpoint_x: f32,
@@ -177,14 +193,14 @@ struct Matrix {
 }
 
 impl Matrix {
-    fn draw_circle(mut self) -> Matrix {
+    fn draw_circle(mut self, color: Rgb) -> Matrix {
         let points = BresenhamCircle::new(
             self.midpoint_x as i32,
             self.midpoint_y as i32,
             self.circle_radius as i32,
         );
         for (x, y) in points {
-            self.cells[y as usize][x as usize].on = true;
+            self.cells[y as usize][x as usize] = Some(Cell { color })
         }
         self
     }
@@ -193,64 +209,83 @@ impl Matrix {
     /// We will be using [Bresenham Line Algorithm](https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm#History).
     fn draw_hand(self, hand: Hand) -> Matrix {
         let degree = hand.degree;
-        let midpoint_x = self.midpoint_x;
-        let midpoint_y = self.midpoint_y;
-        let midpoint = (midpoint_x as isize, midpoint_y as isize);
-
         let radian = PI / 2.0 - (degree).to_radians();
-
         let radius = self.circle_radius;
 
-        // We treat radius as the hypotenuse
-        // Trigonometry hints:
-        // Adjacent = Hypotenuse * cos theta
-        // Opposite = Hypotenuse * sin theta
+        let midpoint_x = self.midpoint_x;
+        let midpoint_y = self.midpoint_y;
 
-        let get_point = |hypotenuse: f32| -> (isize, isize) {
-            let x = midpoint_x + hypotenuse * radian.cos();
-            let y = midpoint_y + hypotenuse * radian.sin();
-            (x as isize, y as isize)
+        let origins = match hand.thickness {
+            HandThickness::Thin => vec![(midpoint_x, midpoint_y)],
+            HandThickness::Bold => vec![
+                (midpoint_x - 1.0, midpoint_y + 1.0), // top left
+                (midpoint_x, midpoint_y + 1.0),       // top
+                (midpoint_x + 1.0, midpoint_y + 1.0), // top right
+                (midpoint_x - 1.0, midpoint_y),       // left
+                (midpoint_x, midpoint_y),             // center
+                (midpoint_x + 1.0, midpoint_y),       // right
+                (midpoint_x - 1.0, midpoint_y - 1.0), // top left
+                (midpoint_x, midpoint_y - 1.0),       // top
+                (midpoint_x + 1.0, midpoint_y - 1.0), // top right
+            ],
         };
 
-        // Calculate startpoint based on line_start
-        let startpoint = match hand.line_start {
-            HandLineStart::FromCenter => get_point(0.0),
-            HandLineStart::FromCircumference => get_point(radius * (1.0 - hand.length)),
-        };
+        origins
+            .into_iter()
+            .fold(self, |matrix, (midpoint_x, midpoint_y)| {
+                // We treat radius as the hypotenuse
+                // Trigonometry hints:
+                // Adjacent = Hypotenuse * cos theta
+                // Opposite = Hypotenuse * sin theta
 
-        // Calculate endpoint based on line_start
-        let endpoint = match hand.line_start {
-            HandLineStart::FromCenter => get_point(radius * hand.length),
-            HandLineStart::FromCircumference => get_point(radius),
-        };
+                let get_point = |hypotenuse: f32| -> (isize, isize) {
+                    let x = midpoint_x + hypotenuse * radian.cos();
+                    let y = midpoint_y + hypotenuse * radian.sin();
+                    (x as isize, y as isize)
+                };
 
-        let points = Bresenham::new(startpoint, endpoint)
-            .map(|(x, y)| Point {
-                x,
+                // Calculate startpoint based on line_start
+                let startpoint = match hand.line_start {
+                    HandLineStart::FromCenter => get_point(0.0),
+                    HandLineStart::FromCircumference => get_point(radius * (1.0 - hand.length)),
+                };
 
-                // We have to invert y because the result returned by Bresenham is based on Cartesian plane
-                // where (0, 0) is at the bottom left corner.
-                // However for our matrix, (0, 0) is at the top left corner, which is like the Cartesian
-                // plane flip around the x-axis.
-                y: self.height as isize - y,
+                // Calculate endpoint based on line_start
+                let endpoint = match hand.line_start {
+                    HandLineStart::FromCenter => get_point(radius * hand.length),
+                    HandLineStart::FromCircumference => get_point(radius),
+                };
+
+                let points = Bresenham::new(startpoint, endpoint)
+                    .map(|(x, y)| Point {
+                        x,
+
+                        // We have to invert y because the result returned by Bresenham is based on Cartesian plane
+                        // where (0, 0) is at the bottom left corner.
+                        // However for our matrix, (0, 0) is at the top left corner, which is like the Cartesian
+                        // plane flip around the x-axis.
+                        y: matrix.height as isize - y,
+                        color: hand.color,
+                    })
+                    .collect();
+
+                matrix.draw_using_points(points)
             })
-            .collect();
-
-        self.draw_using_points(points)
     }
 
-    fn print_matrix(self, color: Rgb) {
-        let block = "█".truecolor(
-            color.get_red() as u8,
-            color.get_green() as u8,
-            color.get_blue() as u8,
-        );
+    fn print_matrix(self) {
         for row in self.cells {
             for cell in row {
-                if cell.on {
-                    print!("{}", block)
-                } else {
-                    print!(" ")
+                match cell {
+                    Some(cell) => {
+                        let block = "█".truecolor(
+                            cell.color.get_red() as u8,
+                            cell.color.get_green() as u8,
+                            cell.color.get_blue() as u8,
+                        );
+                        print!("{}", block)
+                    }
+                    None => print!(" "),
                 }
             }
             println!()
@@ -259,7 +294,7 @@ impl Matrix {
 
     fn draw_using_points(mut self, points: Vec<Point>) -> Matrix {
         for point in points {
-            self.cells[point.y as usize][point.x as usize].on = true
+            self.cells[point.y as usize][point.x as usize] = Some(Cell { color: point.color })
         }
         self
     }
@@ -268,6 +303,7 @@ impl Matrix {
 struct Point {
     x: isize,
     y: isize,
+    color: Rgb,
 }
 struct Hand {
     /// 0 to 360, where:
@@ -276,10 +312,15 @@ struct Hand {
     /// 180 = South,
     /// 270 = West.
     degree: f32,
-    width: f32,
+    thickness: HandThickness,
     /// In terms of percentage. 0 is shortest, 1 is longest.
     length: f32,
     line_start: HandLineStart,
+    color: Rgb,
+}
+enum HandThickness {
+    Thin,
+    Bold,
 }
 enum HandLineStart {
     FromCenter,
