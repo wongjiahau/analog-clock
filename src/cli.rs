@@ -6,13 +6,13 @@ use structopt::StructOpt;
     about = "\nSee https://github.com/wongjiahau/analog-clock"
 )]
 pub struct CliOptions {
-    /// Color of the clock in hex.
-    /// Default is "Green Gecko", suitable for both black and white screen.
-    #[structopt(short, long, default_value = "#39ff14")]
-    pub color: String,
+    /// Theme of the clock.
+    /// See https://github.com/wongjiahau/analog-clock/blob/master/src/theme.rs
+    #[structopt(long, default_value = "nord-frost")]
+    pub theme: String,
 
     /// How often should the clock be redrawn in millisecond.
-    #[structopt(short, long, default_value = "1000")]
+    #[structopt(long, default_value = "1000")]
     pub tick: usize,
 
     /// Hide second hand.

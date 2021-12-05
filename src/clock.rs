@@ -1,3 +1,4 @@
+use super::theme::Theme;
 use bresenham::Bresenham;
 use chrono::{DateTime, Local, Timelike};
 use colored::{self, Colorize};
@@ -12,8 +13,7 @@ use std::f32::consts::PI;
 use std::time::Duration;
 
 pub struct RunClockOptions {
-    /// Color of the clock.
-    pub color: Rgb,
+    pub theme: Theme,
 
     /// How often should the clock be redrawn.
     pub tick_interval: Duration,
@@ -39,7 +39,37 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
         };
         let datetime: DateTime<Local> = Local::now();
 
-        let matrix = matrix.draw_circle(options.color);
+        let matrix = matrix.draw_circle(Rgb::from_hex_str(options.theme.clock_face).unwrap());
+
+        // Draw clock face: hour labels
+        let matrix = if options.show_hour_labels {
+            (0..12).into_iter().fold(matrix, |matrix, n| {
+                matrix.draw_hand(Hand {
+                    degree: (n as f32) / 12.0 * 360.0,
+                    thickness: HandThickness::Thin,
+                    length: 0.15,
+                    line_start: HandLineStart::FromCircumference,
+                    color: Rgb::from_hex_str(options.theme.clock_face).unwrap(),
+                })
+            })
+        } else {
+            matrix
+        };
+
+        // Draw clock face: minute/seconds labels
+        let matrix = if options.show_minute_labels {
+            (0..60).into_iter().fold(matrix, |matrix, n| {
+                matrix.draw_hand(Hand {
+                    degree: (n as f32) / 60.0 * 360.0,
+                    thickness: HandThickness::Thin,
+                    length: 0.05,
+                    line_start: HandLineStart::FromCircumference,
+                    color: Rgb::from_hex_str("#4C566A").unwrap(),
+                })
+            })
+        } else {
+            matrix
+        };
 
         let millisecond = datetime.timestamp_millis() % 1000;
         let second = datetime.second() as f32;
@@ -55,59 +85,32 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
         let degree_minute = (minute + second / 60.0) / 60.0 * 360.0;
         let degree_hour = (hour + minute / 60.0) / 12.0 * 360.0;
 
-        let matrix = if options.show_second_hand {
-            matrix.draw_hand(Hand {
-                degree: degree_second,
-                thickness: HandThickness::Thin,
-                length: 0.8,
-                line_start: HandLineStart::FromCenter,
-                color: Rgb::from_hex_str("#2E3440").unwrap(),
-            })
-        } else {
-            matrix
-        };
-
+        // Firstly, draw minute hand
         let matrix = matrix.draw_hand(Hand {
             degree: degree_minute,
             thickness: HandThickness::Bold,
-            length: 0.8,
+            length: 0.9,
             line_start: HandLineStart::FromCenter,
-            color: Rgb::from_hex_str("#3B4252").unwrap(),
+            color: Rgb::from_hex_str(options.theme.minute).unwrap(),
         });
+
+        // Secondly, draw hour hand, as hour hand must be on top of minute hand
         let matrix = matrix.draw_hand(Hand {
             degree: degree_hour,
             thickness: HandThickness::Bold,
             length: 0.5,
             line_start: HandLineStart::FromCenter,
-            color: Rgb::from_hex_str("#2E3440").unwrap(),
+            color: Rgb::from_hex_str(options.theme.hour).unwrap(),
         });
 
-        // Draw clock face: hour labels
-        let matrix = if options.show_hour_labels {
-            (0..12).into_iter().fold(matrix, |matrix, n| {
-                matrix.draw_hand(Hand {
-                    degree: (n as f32) / 12.0 * 360.0,
-                    thickness: HandThickness::Thin,
-                    length: 0.15,
-                    line_start: HandLineStart::FromCircumference,
-                    color: Rgb::from_hex_str("#4C566A").unwrap(),
-                })
-            })
-        } else {
-            matrix
-        };
-
-        // Draw clock face: minute/seconds labels
-
-        let matrix = if options.show_minute_labels {
-            (0..60).into_iter().fold(matrix, |matrix, n| {
-                matrix.draw_hand(Hand {
-                    degree: (n as f32) / 60.0 * 360.0,
-                    thickness: HandThickness::Thin,
-                    length: 0.05,
-                    line_start: HandLineStart::FromCircumference,
-                    color: Rgb::from_hex_str("#4C566A").unwrap(),
-                })
+        // Thirdly, draw second hand, which should be on top of hour hand & minute hand
+        let matrix = if options.show_second_hand {
+            matrix.draw_hand(Hand {
+                degree: degree_second,
+                thickness: HandThickness::Thin,
+                length: 0.9,
+                line_start: HandLineStart::FromCenter,
+                color: Rgb::from_hex_str(options.theme.second).unwrap(),
             })
         } else {
             matrix
