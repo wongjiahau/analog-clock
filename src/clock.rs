@@ -202,38 +202,26 @@ impl Matrix {
         let radius = self.circle_radius;
 
         // We treat radius as the hypotenuse
-        let hypotenuse = radius;
-
         // Trigonometry hints:
         // Adjacent = Hypotenuse * cos theta
         // Opposite = Hypotenuse * sin theta
 
+        let get_point = |hypotenuse: f32| -> (isize, isize) {
+            let x = midpoint_x + hypotenuse * radian.cos();
+            let y = midpoint_y + hypotenuse * radian.sin();
+            (x as isize, y as isize)
+        };
+
         // Calculate startpoint based on line_start
-        let startpoint = {
-            match hand.line_start {
-                HandLineStart::FromCenter => midpoint,
-                HandLineStart::FromCircumference => {
-                    let x = midpoint_x + hypotenuse * (1.0 - hand.length) * radian.cos();
-                    let y = midpoint_y + hypotenuse * (1.0 - hand.length) * radian.sin();
-                    (x as isize, y as isize)
-                }
-            }
+        let startpoint = match hand.line_start {
+            HandLineStart::FromCenter => get_point(0.0),
+            HandLineStart::FromCircumference => get_point(radius * (1.0 - hand.length)),
         };
 
         // Calculate endpoint based on line_start
-        let endpoint = {
-            match hand.line_start {
-                HandLineStart::FromCenter => {
-                    let x = midpoint_x + hypotenuse * hand.length * radian.cos();
-                    let y = midpoint_y + hypotenuse * hand.length * radian.sin();
-                    (x as isize, y as isize)
-                }
-                HandLineStart::FromCircumference => {
-                    let x = midpoint_x + hypotenuse * radian.cos();
-                    let y = midpoint_y + hypotenuse * radian.sin();
-                    (x as isize, y as isize)
-                }
-            }
+        let endpoint = match hand.line_start {
+            HandLineStart::FromCenter => get_point(radius * hand.length),
+            HandLineStart::FromCircumference => get_point(radius),
         };
 
         let points = Bresenham::new(startpoint, endpoint)
