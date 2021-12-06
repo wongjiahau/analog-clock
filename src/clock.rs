@@ -6,7 +6,7 @@ use colors_transform::Color;
 use colors_transform::Rgb;
 use image::{
     imageops::{crop, resize},
-    GenericImageView, ImageBuffer, Rgb as RgbPixel,
+    ImageBuffer, Rgb as RgbPixel,
 };
 use line_drawing::BresenhamCircle;
 use std::f32::consts::PI;
@@ -116,33 +116,10 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
             matrix
         };
 
-        // After computing the final matrix, we have to apply vertical/horizontal scaling to it
-        // such that the clock will look like a circle  instead of an ellipse.
-        // This is because each "pixel" (or character) on a terminal is not square-ish, but a
-        // vertical rectangle instead.
+        // After computing the final matrix, we have to resize it
+        let matrix = matrix.rescale();
 
-        let mut img = matrix_to_luma_image_buffer(&matrix);
-
-        let padding = matrix.circle_radius / 10.0;
-        let img = {
-            let new_x = (matrix.midpoint_x - matrix.circle_radius - padding) as u32;
-            let new_y = 0;
-            let new_width = ((matrix.circle_radius + padding) * 2.0) as u32;
-            let new_height = matrix.height as u32;
-            crop(&mut img, new_x, new_y, new_width, new_height)
-        };
-        let img = resize(
-            &img,
-            matrix.width as u32,
-            img.height(),
-            image::imageops::FilterType::Nearest,
-        );
-        let matrix = Matrix {
-            cells: luma_image_buffer_to_matrix(img),
-            ..matrix
-        };
-
-        matrix.print_matrix();
+        matrix.print();
         std::thread::sleep(options.tick_interval);
 
         print!("{esc}[2J{esc}[1;1H", esc = 27 as char);
@@ -215,22 +192,24 @@ impl Matrix {
         let radian = PI / 2.0 - (degree).to_radians();
         let radius = self.circle_radius;
 
-        let midpoint_x = self.midpoint_x;
-        let midpoint_y = self.midpoint_y;
+        let origins = {
+            let x = self.midpoint_x;
+            let y = self.midpoint_y;
 
-        let origins = match hand.thickness {
-            HandThickness::Thin => vec![(midpoint_x, midpoint_y)],
-            HandThickness::Bold => vec![
-                (midpoint_x - 1.0, midpoint_y + 1.0), // top left
-                (midpoint_x, midpoint_y + 1.0),       // top
-                (midpoint_x + 1.0, midpoint_y + 1.0), // top right
-                (midpoint_x - 1.0, midpoint_y),       // left
-                (midpoint_x, midpoint_y),             // center
-                (midpoint_x + 1.0, midpoint_y),       // right
-                (midpoint_x - 1.0, midpoint_y - 1.0), // top left
-                (midpoint_x, midpoint_y - 1.0),       // top
-                (midpoint_x + 1.0, midpoint_y - 1.0), // top right
-            ],
+            match hand.thickness {
+                HandThickness::Thin => vec![(x, y)],
+                HandThickness::Bold => vec![
+                    (x - 1.0, y + 1.0), // top left
+                    (x, y + 1.0),       // top
+                    (x + 1.0, y + 1.0), // top right
+                    (x - 1.0, y),       // left
+                    (x, y),             // center
+                    (x + 1.0, y),       // right
+                    (x - 1.0, y - 1.0), // top left
+                    (x, y - 1.0),       // top
+                    (x + 1.0, y - 1.0), // top right
+                ],
+            }
         };
 
         origins
@@ -276,7 +255,68 @@ impl Matrix {
             })
     }
 
-    fn print_matrix(self) {
+    /// Apply vertical/horizontal scaling to the given matrix,
+    /// such that the clock will look like a circle instead of an ellipse.
+    /// This is because each "pixel" (or character) on a terminal is not square-ish, but a
+    /// vertical rectangle instead.
+    fn rescale(self) -> Matrix {
+        let mut img = matrix_to_luma_image_buffer(&self);
+
+        let padding = 0.0;// self.circle_radius / 10.0;
+
+        // h/w, where:
+        //   h is the actual height of each character in the terminal,
+        //   w is the actual width of each character in terminal
+        let aspect_ratio = 2.13;
+
+        let img = {
+            let diameter = self.circle_radius * 2.0;
+            let width_delta = (diameter + padding) * aspect_ratio;
+            let new_x = width_delta / 2.0;
+
+            let new_y = 0;
+            let new_width = (self.width as f32) - width_delta;
+            let new_height = self.height as u32;
+
+            // let height = self.height;
+            // self.draw_using_points(
+            //     (0..height)
+            //         .into_iter()
+            //         .map(|y| Point {
+            //             x: new_x as isize,
+            //             y: y as isize,
+            //             color: Rgb::new(),
+            //         })
+            //         .collect(),
+            // ).draw_using_points(
+            //     (0..height)
+            //         .into_iter()
+            //         .map(|y| Point {
+            //             x: (new_x + new_width) as isize,
+            //             y: y as isize,
+            //             color: Rgb::new(),
+            //         })
+            //         .collect(),
+            // )
+            // .print();
+            // panic!();
+
+            crop(&mut img, new_x as u32, new_y, new_width as u32, new_height)
+        };
+
+        let img = resize(
+            &img,
+            self.width as u32,
+            self.height as u32,
+            image::imageops::FilterType::Nearest,
+        );
+        Matrix {
+            cells: luma_image_buffer_to_matrix(img),
+            ..self
+        }
+    }
+
+    fn print(self) {
         for row in self.cells {
             for cell in row {
                 match cell {
