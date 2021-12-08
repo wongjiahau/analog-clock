@@ -4,13 +4,14 @@ use chrono::{DateTime, Local, Timelike};
 use colored::{self, Colorize};
 use colors_transform::Color;
 use colors_transform::Rgb;
-use image::{
-    imageops::{crop, resize},
-    ImageBuffer, Rgb as RgbPixel,
-};
 use line_drawing::BresenhamCircle;
 use std::f32::consts::PI;
 use std::time::Duration;
+
+// h/w, where:
+//   h is the actual height of each character in the terminal,
+//   w is the actual width of each character in terminal
+const ASPECT_RATIO: usize = 2;
 
 pub struct RunClockOptions {
     pub theme: Theme,
@@ -27,15 +28,21 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
     loop {
         let (width, height) =
             term_size::dimensions().ok_or_else(|| "Unable to get term size :(".to_string())?;
+
+        let width = width / ASPECT_RATIO; // Divide by two because each pixel height is approximately double the pixel width
+
         let midpoint_x = (width as f32) / 2.0;
         let midpoint_y = (height as f32) / 2.0;
-        let matrix = Matrix {
-            cells: vec![vec![None; width]; height],
-            width,
-            height,
-            midpoint_x,
-            midpoint_y,
-            circle_radius: midpoint_x.min(midpoint_y) / 1.1,
+        let radius = midpoint_x.min(midpoint_y) / 1.1;
+
+        let matrix = {
+            Matrix {
+                cells: vec![vec![None; width]; height],
+                height,
+                midpoint_x: width as f32 / 2.0,
+                midpoint_y: height as f32 / 2.0,
+                circle_radius: radius,
+            }
         };
         let datetime: DateTime<Local> = Local::now();
 
@@ -116,46 +123,13 @@ pub fn run_clock(options: RunClockOptions) -> Result<(), String> {
             matrix
         };
 
-        // After computing the final matrix, we have to resize it
-        let matrix = matrix.rescale();
-
         matrix.print();
+
         std::thread::sleep(options.tick_interval);
 
+        // Clear the screen
         print!("{esc}[2J{esc}[1;1H", esc = 27 as char);
     }
-}
-
-fn matrix_to_luma_image_buffer(matrix: &Matrix) -> ImageBuffer<RgbPixel<u8>, Vec<u8>> {
-    ImageBuffer::from_fn(
-        matrix.width as u32,
-        matrix.height as u32,
-        |x, y| match &matrix.cells[y as usize][x as usize] {
-            Some(cell) => RgbPixel([
-                cell.color.get_red() as u8,
-                cell.color.get_green() as u8,
-                cell.color.get_blue() as u8,
-            ]),
-            None => RgbPixel([255, 255, 255]),
-        },
-    )
-}
-
-fn luma_image_buffer_to_matrix(img: ImageBuffer<RgbPixel<u8>, Vec<u8>>) -> Vec<Vec<Option<Cell>>> {
-    let width = img.width() as usize;
-    let mut cells = vec![vec![None; width]; img.height() as usize];
-    img.pixels().enumerate().for_each(|(index, pixel)| {
-        let y = (index as f32 / width as f32).floor() as usize;
-        let x = index % width;
-        cells[y][x] = if pixel != &RgbPixel([255, 255, 255]) {
-            Some(Cell {
-                color: Rgb::from(pixel.0[0] as f32, pixel.0[1] as f32, pixel.0[2] as f32),
-            })
-        } else {
-            None
-        }
-    });
-    cells
 }
 
 #[derive(Clone, Debug)]
@@ -166,7 +140,6 @@ struct Cell {
 struct Matrix {
     cells: Vec<Vec<Option<Cell>>>,
     height: usize,
-    width: usize,
     midpoint_x: f32,
     midpoint_y: f32,
     circle_radius: f32,
@@ -255,80 +228,21 @@ impl Matrix {
             })
     }
 
-    /// Apply vertical/horizontal scaling to the given matrix,
-    /// such that the clock will look like a circle instead of an ellipse.
-    /// This is because each "pixel" (or character) on a terminal is not square-ish, but a
-    /// vertical rectangle instead.
-    fn rescale(self) -> Matrix {
-        let mut img = matrix_to_luma_image_buffer(&self);
-
-        let padding = 0.0;// self.circle_radius / 10.0;
-
-        // h/w, where:
-        //   h is the actual height of each character in the terminal,
-        //   w is the actual width of each character in terminal
-        let aspect_ratio = 2.13;
-
-        let img = {
-            let diameter = self.circle_radius * 2.0;
-            let width_delta = (diameter + padding) * aspect_ratio;
-            let new_x = width_delta / 2.0;
-
-            let new_y = 0;
-            let new_width = (self.width as f32) - width_delta;
-            let new_height = self.height as u32;
-
-            // let height = self.height;
-            // self.draw_using_points(
-            //     (0..height)
-            //         .into_iter()
-            //         .map(|y| Point {
-            //             x: new_x as isize,
-            //             y: y as isize,
-            //             color: Rgb::new(),
-            //         })
-            //         .collect(),
-            // ).draw_using_points(
-            //     (0..height)
-            //         .into_iter()
-            //         .map(|y| Point {
-            //             x: (new_x + new_width) as isize,
-            //             y: y as isize,
-            //             color: Rgb::new(),
-            //         })
-            //         .collect(),
-            // )
-            // .print();
-            // panic!();
-
-            crop(&mut img, new_x as u32, new_y, new_width as u32, new_height)
-        };
-
-        let img = resize(
-            &img,
-            self.width as u32,
-            self.height as u32,
-            image::imageops::FilterType::Nearest,
-        );
-        Matrix {
-            cells: luma_image_buffer_to_matrix(img),
-            ..self
-        }
-    }
-
     fn print(self) {
         for row in self.cells {
             for cell in row {
-                match cell {
-                    Some(cell) => {
-                        let block = "█".truecolor(
+                let character = match cell {
+                    Some(cell) => "█"
+                        .truecolor(
                             cell.color.get_red() as u8,
                             cell.color.get_green() as u8,
                             cell.color.get_blue() as u8,
-                        );
-                        print!("{}", block)
-                    }
-                    None => print!(" "),
+                        )
+                        .to_string(),
+                    None => " ".to_string(),
+                };
+                for _ in 0..ASPECT_RATIO {
+                    print!("{}", character)
                 }
             }
             println!()
