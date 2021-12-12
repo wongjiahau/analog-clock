@@ -3,6 +3,8 @@ use bresenham::Bresenham;
 use chrono::{DateTime, Local, Timelike};
 use colors_transform::Color;
 use colors_transform::Rgb;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
 use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
@@ -46,9 +48,16 @@ struct UiState {
 pub fn run_clock(options: RunClockOptions) -> Result<()> {
     terminal::enable_raw_mode()?;
 
-    stdout().execute(cursor::Hide)?;
+    let mut stdout = stdout();
+    stdout
+        .execute(cursor::Hide)?
+        .execute(terminal::Clear(terminal::ClearType::All))?;
 
     let mut state = UiState { aspect_ratio: 2.0 };
+
+    let (width, height) = term_size::dimensions()
+        .ok_or_else(|| new_error("Unable to get term size :(".to_string()))?;
+    let mut current_matrix = Matrix::new(width, height);
 
     loop {
         // Read for user input in a non-blocking manner
@@ -56,37 +65,55 @@ pub fn run_clock(options: RunClockOptions) -> Result<()> {
         if poll(options.tick_interval)? {
             match read()? {
                 Event::Key(event) => {
+                    // Increase width
                     if event.code == KeyCode::Char('+') || event.code == KeyCode::Char('=') {
                         state.aspect_ratio += 0.1;
-                    } else if event.code == KeyCode::Char('-') {
-                        state.aspect_ratio -= 0.1;
-                    } else if event.code == KeyCode::Char('q') {
-                        stdout().execute(cursor::Show)?;
+                    }
+                    // Decrease width
+                    else if event.code == KeyCode::Char('-') {
+                        if state.aspect_ratio > 1.0 {
+                            state.aspect_ratio -= 0.1;
+                        }
+                    }
+                    // Reset width
+                    else if event.code == KeyCode::Char('0') {
+                        state.aspect_ratio = 2.0;
+                    }
+                    // Quit
+                    else if event.code == KeyCode::Char('q')
+                        || event == KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+                    {
+                        stdout
+                            .execute(terminal::Clear(terminal::ClearType::All))?
+                            .execute(cursor::Show)?;
                         process::exit(0)
                     }
                 }
                 Event::Mouse(event) => println!("{:?}", event),
-                Event::Resize(width, height) => println!("New size {}x{}", width, height),
+                Event::Resize(width, height) => {
+                    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
+                    current_matrix = Matrix::new(width as usize, height as usize)
+                }
             }
         }
-        draw_clock(&state, &options)?
+        let new_matrix = draw_clock(&state, &options);
+
+        // Print based on diff, this is to improve rendering performance
+        let diff = current_matrix.diff(&new_matrix);
+
+        Matrix::print(diff)?;
+
+        // Update current_matrix
+        current_matrix = new_matrix;
     }
 }
 
-fn draw_clock(state: &UiState, options: &RunClockOptions) -> Result<()> {
+fn draw_clock(state: &UiState, options: &RunClockOptions) -> Matrix {
     let (screen_width, height) = term_size::dimensions()
-        .ok_or_else(|| new_error("Unable to get term size :(".to_string()))?;
+        .ok_or_else(|| new_error("Unable to get term size :(".to_string()))
+        .unwrap();
     let clock_width = (screen_width as f32) / state.aspect_ratio;
-    let midpoint_x = (clock_width as f32) / 2.0;
-    let midpoint_y = (height as f32) / 2.0;
-    let matrix = Matrix {
-        cells: vec![vec![None; clock_width as usize]; height],
-        width: clock_width as usize,
-        height,
-        midpoint_x,
-        midpoint_y,
-        circle_radius: midpoint_x.min(midpoint_y) / 1.1,
-    };
+    let matrix = Matrix::new(clock_width as usize, height);
     let datetime: DateTime<Local> = Local::now();
 
     let matrix = matrix.draw_circle(Rgb::from_hex_str(options.theme.clock_face).unwrap());
@@ -167,13 +194,10 @@ fn draw_clock(state: &UiState, options: &RunClockOptions) -> Result<()> {
     };
 
     // After computing the final matrix, we have to resize it
-    let matrix = matrix.rescale(screen_width);
-
-    matrix.print()?;
-    Ok(())
+    matrix.rescale(screen_width)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Cell {
     color: Rgb,
 }
@@ -188,6 +212,19 @@ struct Matrix {
 }
 
 impl Matrix {
+    fn new(width: usize, height: usize) -> Matrix {
+        let midpoint_x = (width as f32) / 2.0;
+        let midpoint_y = (height as f32) / 2.0;
+        Matrix {
+            cells: vec![vec![None; width as usize]; height],
+            width: width as usize,
+            height,
+            midpoint_x,
+            midpoint_y,
+            circle_radius: midpoint_x.min(midpoint_y) / 1.1,
+        }
+    }
+
     fn draw_circle(mut self, color: Rgb) -> Matrix {
         let points = BresenhamCircle::new(
             self.midpoint_x as i32,
@@ -284,32 +321,65 @@ impl Matrix {
         );
         Matrix {
             cells: luma_image_buffer_to_matrix(img),
+            width: screen_width,
             ..self
         }
     }
 
-    fn print(self) -> Result<()> {
+    /// Compute the diff between two matrices.
+    /// This is for reducing unnecessary re-renders.
+    fn diff(&self, new: &Matrix) -> Vec<DiffUpdate> {
+        let old = self;
+        if old.width != new.width {
+            panic!(
+                "Diff error: old width != new width, old.width = {}, new.width = {}",
+                old.width, new.width
+            )
+        }
+        if old.height != new.height {
+            panic!(
+                "Diff error: old height != new height, old.height = {}, new.height = {}",
+                old.height, new.height
+            )
+        }
+        let points = generate_points(old.width, old.height);
+
+        points
+            .into_iter()
+            .filter_map(|(x, y)| {
+                let old_cell = &old.cells[y][x];
+                let new_cell = &new.cells[y][x];
+                if old_cell == new_cell {
+                    None
+                } else {
+                    Some(DiffUpdate {
+                        x,
+                        y,
+                        cell: new_cell.clone(),
+                    })
+                }
+            })
+            .collect()
+    }
+
+    fn print(updates: Vec<DiffUpdate>) -> Result<()> {
         let mut stdout = stdout();
 
-        stdout.execute(terminal::Clear(terminal::ClearType::All))?;
+        for update in updates {
+            let x = update.x as u16;
+            let y = update.y as u16;
+            let character = match update.cell {
+                Some(cell) => "█".with(style::Color::Rgb {
+                    r: cell.color.get_red() as u8,
+                    g: cell.color.get_green() as u8,
+                    b: cell.color.get_blue() as u8,
+                }),
+                None => " ".stylize(),
+            };
 
-        for (y, row) in self.cells.into_iter().enumerate() {
-            for (x, cell) in row.into_iter().enumerate() {
-                let x = x as u16;
-                let y = y as u16;
-                let character = match cell {
-                    Some(cell) => "█".with(style::Color::Rgb {
-                        r: cell.color.get_red() as u8,
-                        g: cell.color.get_green() as u8,
-                        b: cell.color.get_blue() as u8,
-                    }),
-                    None => " ".stylize(),
-                };
-
-                stdout
-                    .queue(cursor::MoveTo(x, y))?
-                    .queue(style::PrintStyledContent(character))?;
-            }
+            stdout
+                .queue(cursor::MoveTo(x, y))?
+                .queue(style::PrintStyledContent(character))?;
         }
 
         stdout.flush()?;
@@ -323,6 +393,19 @@ impl Matrix {
         }
         self
     }
+}
+
+fn generate_points(width: usize, height: usize) -> Vec<(usize, usize)> {
+    (0..height)
+        .into_iter()
+        .flat_map(|y| (0..width).into_iter().map(move |x| (x, y)))
+        .collect()
+}
+
+struct DiffUpdate {
+    x: usize,
+    y: usize,
+    cell: Option<Cell>,
 }
 
 fn matrix_to_luma_image_buffer(matrix: &Matrix) -> ImageBuffer<RgbPixel<u8>, Vec<u8>> {
