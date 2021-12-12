@@ -3,7 +3,14 @@ use structopt::StructOpt;
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "Analog Clock",
-    about = "\nSee https://github.com/wongjiahau/analog-clock"
+    about = "
+Key bindings:
+  'q'     : quit
+  '-'     : decrease clock width
+  '='/'+' : increase clock width
+
+For more info, please refer https://github.com/wongjiahau/analog-clock
+"
 )]
 pub struct CliOptions {
     /// Theme of the clock.
