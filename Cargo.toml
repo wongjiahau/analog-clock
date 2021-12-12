@@ -2,7 +2,7 @@
 description = "A terminal analog clock."
 license = "MIT"
 name = "analog-clock"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2018"
 repository = "https://github.com/wongjiahau/analog-clock/tree/master"
 
