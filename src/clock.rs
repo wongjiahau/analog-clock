@@ -1,4 +1,5 @@
-use super::theme::Theme;
+use crate::theme::THEMES;
+
 use bresenham::Bresenham;
 use chrono::{DateTime, Local, Timelike};
 use colors_transform::Color;
@@ -19,7 +20,7 @@ use std::process;
 use std::time::Duration;
 
 pub struct RunClockOptions {
-    pub theme: Theme,
+    pub theme_index: usize,
 
     /// How often should the clock be redrawn.
     pub tick_interval: Duration,
@@ -43,6 +44,7 @@ struct UiState {
     ///
     /// This is needed to circularize the clock, otherwise it will look like an ellipse.
     aspect_ratio: f32,
+    theme_index: usize,
 }
 
 pub fn run_clock(options: RunClockOptions) -> Result<()> {
@@ -53,7 +55,10 @@ pub fn run_clock(options: RunClockOptions) -> Result<()> {
         .execute(cursor::Hide)?
         .execute(terminal::Clear(terminal::ClearType::All))?;
 
-    let mut state = UiState { aspect_ratio: 2.0 };
+    let mut state = UiState {
+        aspect_ratio: 2.0,
+        theme_index: options.theme_index,
+    };
 
     let (width, height) = term_size::dimensions()
         .ok_or_else(|| new_error("Unable to get term size :(".to_string()))?;
@@ -88,6 +93,18 @@ pub fn run_clock(options: RunClockOptions) -> Result<()> {
                             .execute(cursor::Show)?;
                         process::exit(0)
                     }
+                    // Next theme
+                    else if event.code == KeyCode::Char('j') {
+                        state.theme_index = (state.theme_index + 1) % THEMES.len()
+                    }
+                    // Previous theme
+                    else if event.code == KeyCode::Char('k') {
+                        state.theme_index = if state.theme_index == 0 {
+                            THEMES.len() - 1
+                        } else {
+                            state.theme_index - 1
+                        }
+                    }
                 }
                 Event::Mouse(event) => println!("{:?}", event),
                 Event::Resize(width, height) => {
@@ -116,7 +133,8 @@ fn draw_clock(state: &UiState, options: &RunClockOptions) -> Matrix {
     let matrix = Matrix::new(clock_width as usize, height);
     let datetime: DateTime<Local> = Local::now();
 
-    let matrix = matrix.draw_circle(Rgb::from_hex_str(options.theme.clock_face).unwrap());
+    let theme = THEMES[state.theme_index];
+    let matrix = matrix.draw_circle(Rgb::from_hex_str(theme.clock_face).unwrap());
 
     // Draw clock face: hour labels
     let matrix = if options.show_hour_labels {
@@ -126,7 +144,7 @@ fn draw_clock(state: &UiState, options: &RunClockOptions) -> Matrix {
                 thickness: HandThickness::Thin,
                 length: 0.15,
                 line_start: HandLineStart::FromCircumference,
-                color: Rgb::from_hex_str(options.theme.clock_face).unwrap(),
+                color: Rgb::from_hex_str(theme.clock_face).unwrap(),
             })
         })
     } else {
@@ -168,7 +186,7 @@ fn draw_clock(state: &UiState, options: &RunClockOptions) -> Matrix {
         thickness: HandThickness::Bold,
         length: 0.9,
         line_start: HandLineStart::FromCenter,
-        color: Rgb::from_hex_str(options.theme.minute).unwrap(),
+        color: Rgb::from_hex_str(theme.minute).unwrap(),
     });
 
     // Secondly, draw hour hand, as hour hand must be on top of minute hand
@@ -177,7 +195,7 @@ fn draw_clock(state: &UiState, options: &RunClockOptions) -> Matrix {
         thickness: HandThickness::Bold,
         length: 0.5,
         line_start: HandLineStart::FromCenter,
-        color: Rgb::from_hex_str(options.theme.hour).unwrap(),
+        color: Rgb::from_hex_str(theme.hour).unwrap(),
     });
 
     // Thirdly, draw second hand, which should be on top of hour hand & minute hand
@@ -187,7 +205,7 @@ fn draw_clock(state: &UiState, options: &RunClockOptions) -> Matrix {
             thickness: HandThickness::Thin,
             length: 0.9,
             line_start: HandLineStart::FromCenter,
-            color: Rgb::from_hex_str(options.theme.second).unwrap(),
+            color: Rgb::from_hex_str(theme.second).unwrap(),
         })
     } else {
         matrix

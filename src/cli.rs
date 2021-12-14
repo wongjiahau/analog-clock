@@ -8,6 +8,8 @@ Key bindings:
   'q'     : quit
   '-'     : decrease clock width
   '='/'+' : increase clock width
+  'j'     : next theme
+  'k'     : previous theme
 
 For more info, please refer https://github.com/wongjiahau/analog-clock
 "
