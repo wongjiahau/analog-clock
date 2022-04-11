@@ -7,7 +7,7 @@ pub struct Theme {
     pub clock_face: &'static str,
 }
 
-pub const THEMES: [Theme; 7] = [
+pub const THEMES: [Theme; 8] = [
     // Nord themes, https://www.nordtheme.com/
     Theme {
         name: "nord-frost",
@@ -60,5 +60,13 @@ pub const THEMES: [Theme; 7] = [
         minute: "#cde768",
         second: "#c0da5b",
         clock_face: "#b3cd4f",
+    },
+    // dim-neon. Contributed by https://github.com/GervinFung
+    Theme {
+        name: "dim-neon",
+        hour: "#67CBE7",
+        minute: "#E5C76B",
+        second: "#E06E6E",
+        clock_face: "#00FA9A",
     },
 ];
